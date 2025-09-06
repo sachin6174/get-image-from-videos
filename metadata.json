@@ -1,0 +1,5 @@
+{
+  "name": "AI Video Frame Enhancer",
+  "description": "An intelligent tool to batch process videos, extract frames with specific human faces (male or female), and use AI to enhance, deblur, and colorize them into high-resolution images ready for download.",
+  "requestFramePermissions": []
+}

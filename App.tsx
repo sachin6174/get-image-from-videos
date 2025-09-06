@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { Gender, ProcessingState, EnhancedImage, ExtractedFrame, VideoQueueItem } from './types';
 import { filterFrameByGender, enhanceImage } from './services/geminiService';
 import Loader from './components/Loader';
-import { DownloadIcon, ZipIcon, UploadIcon } from './components/icons';
+import { DownloadIcon, ZipIcon, UploadIcon, PlayIcon, ImageIcon, CheckCircleIcon, SearchIcon } from './components/icons';
 
 // Make JSZip available in the window scope for TypeScript
 declare global {
@@ -79,6 +79,14 @@ const SegmentSelectorModal: React.FC<SegmentSelectorModalProps> = ({ item, onClo
             if (videoRef.current) videoRef.current.currentTime = newEndTime;
         }
     };
+
+    const handleSkip = (amount: number) => {
+        if (videoRef.current) {
+            const newTime = videoRef.current.currentTime + amount;
+            // Clamp the new time between 0 and the video's duration
+            videoRef.current.currentTime = Math.max(0, Math.min(duration, newTime));
+        }
+    };
     
     const handleSave = () => {
         onSave(item.id, startTime, endTime);
@@ -89,11 +97,34 @@ const SegmentSelectorModal: React.FC<SegmentSelectorModalProps> = ({ item, onClo
 
     return (
         <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="segment-selector-title">
-            <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-2xl w-full p-6 m-4" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-4xl w-full p-6 m-4" onClick={e => e.stopPropagation()}>
                 <h3 id="segment-selector-title" className="text-lg font-bold text-indigo-600">Select Video Segment</h3>
                 <p className="text-sm text-gray-500 truncate mb-4">{item.file.name}</p>
 
-                <video ref={videoRef} src={videoSrc ?? undefined} controls className="w-full rounded-lg bg-black mb-4 aspect-video"></video>
+                <video ref={videoRef} src={videoSrc ?? undefined} controls className="w-full rounded-lg bg-black mb-2 aspect-video"></video>
+                
+                <div className="flex items-center justify-center gap-4 mb-4">
+                    <button 
+                        onClick={() => handleSkip(-2)} 
+                        className="px-4 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        aria-label="Skip backward 2 seconds"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                        </svg>
+                        -2s
+                    </button>
+                    <button 
+                        onClick={() => handleSkip(2)} 
+                        className="px-4 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        aria-label="Skip forward 2 seconds"
+                    >
+                        +2s
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                        </svg>
+                    </button>
+                </div>
 
                 <div className="space-y-3">
                     <div className="relative h-2 rounded-full bg-gray-200">
@@ -276,26 +307,88 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onImageClick }) => 
 
     return (
         <div className="w-full">
-            <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold text-gray-900">Processed Images ({images.length})</h2>
+            <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-800">Results ({images.length})</h2>
                 {images.length > 0 && (
-                    <button onClick={downloadAllAsZip} disabled={isZipping} className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed transition-colors">
+                    <button onClick={downloadAllAsZip} disabled={isZipping} className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed transition-colors font-semibold">
                         {isZipping ? <Loader /> : <ZipIcon className="w-5 h-5 mr-2" />}
                         {isZipping ? 'Zipping...' : 'Download All'}
                     </button>
                 )}
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {images.map(image => (
                     <div key={image.id} className="relative group bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm cursor-pointer" onClick={() => onImageClick(image)}>
                         <img src={image.url} alt={`Enhanced frame at ${image.originalTimestamp}`} className="w-full h-40 object-cover transition-transform group-hover:scale-105" />
                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center">
                             <div className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                <SearchIcon className="h-6 w-6" />
                             </div>
                         </div>
                     </div>
                 ))}
+            </div>
+        </div>
+    );
+};
+
+interface ExtractedFramePreviewModalProps {
+    frame: ExtractedFrame;
+    onClose: () => void;
+}
+const ExtractedFramePreviewModal: React.FC<ExtractedFramePreviewModalProps> = ({ frame, onClose }) => (
+    <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={onClose}>
+        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-4xl w-full p-4 relative" onClick={e => e.stopPropagation()}>
+            <img src={frame.dataUrl} alt={`Preview of frame at ${frame.timestamp.toFixed(2)}s`} className="w-full h-auto max-h-[75vh] object-contain rounded-lg"/>
+            <div className="mt-4 flex justify-center items-center">
+                 <button onClick={onClose} className="px-6 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+);
+
+interface ExtractedFrameGalleryProps {
+    frames: ExtractedFrame[];
+    selectedIds: Set<number>;
+    onFrameSelect: (timestamp: number) => void;
+    onFramePreview: (frame: ExtractedFrame) => void;
+    onSelectAll: () => void;
+    onDeselectAll: () => void;
+}
+const ExtractedFrameGallery: React.FC<ExtractedFrameGalleryProps> = ({ frames, selectedIds, onFrameSelect, onFramePreview, onSelectAll, onDeselectAll }) => {
+    return (
+        <div className="w-full">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <div>
+                    <h2 className="text-2xl font-bold text-gray-800">Select Frames to Enhance</h2>
+                    <p className="text-sm text-gray-500">{frames.length} frames found. {selectedIds.size} selected.</p>
+                </div>
+                 <div className="flex-shrink-0 flex gap-2">
+                    <button onClick={onSelectAll} className="px-3 py-1.5 text-sm font-semibold bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors">Select All</button>
+                    <button onClick={onDeselectAll} className="px-3 py-1.5 text-sm font-semibold bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors">Deselect All</button>
+                </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {frames.map(frame => {
+                    const isSelected = selectedIds.has(frame.timestamp);
+                    return (
+                        <div key={frame.timestamp} className="relative group bg-white rounded-lg overflow-hidden cursor-pointer" onClick={() => onFrameSelect(frame.timestamp)}>
+                            <img src={frame.dataUrl} alt={`Extracted frame at ${frame.timestamp}`} className={`w-full h-40 object-cover transition-transform group-hover:scale-105 border-4 ${isSelected ? 'border-indigo-500' : 'border-transparent'}`} />
+                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center">
+                                <button onClick={(e) => { e.stopPropagation(); onFramePreview(frame); }} className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100">
+                                    <SearchIcon className="h-6 w-6" />
+                                </button>
+                            </div>
+                            {isSelected && (
+                                <div className="absolute top-2 right-2 text-indigo-500 bg-white rounded-full">
+                                    <CheckCircleIcon className="w-6 h-6" />
+                                </div>
+                            )}
+                        </div>
+                    )
+                })}
             </div>
         </div>
     );
@@ -306,34 +399,33 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onImageClick }) => 
 
 const App: React.FC = () => {
     const [currentVideo, setCurrentVideo] = useState<VideoQueueItem | null>(null);
-    const [genderFilter, setGenderFilter] = useState<Gender>('Female');
     const [shouldColorize, setShouldColorize] = useState<boolean>(true);
+    const [framesPerSecond, setFramesPerSecond] = useState<number>(4);
+    const [gender, setGender] = useState<Gender>('All');
     const [processingState, setProcessingState] = useState<ProcessingState>('idle');
+
+    const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
+    const [selectedFrameIds, setSelectedFrameIds] = useState<Set<number>>(new Set());
     const [enhancedImages, setEnhancedImages] = useState<EnhancedImage[]>([]);
+
     const [configuringVideo, setConfiguringVideo] = useState<VideoQueueItem | null>(null);
     const [previewingImage, setPreviewingImage] = useState<EnhancedImage | null>(null);
+    const [previewingExtractedFrame, setPreviewingExtractedFrame] = useState<ExtractedFrame | null>(null);
 
     const handleFileSelect = (file: File) => {
         if (!file.type.startsWith("video/")) return;
-
         const newItem: VideoQueueItem = {
-            id: `${file.name}-${file.lastModified}-${file.size}`,
-            file,
-            status: 'queued',
-            progressMessage: 'Waiting...',
-            progressCurrent: 0,
-            progressTotal: 1,
-            resultCount: 0,
+            id: `${file.name}-${file.lastModified}-${file.size}`, file, status: 'queued',
+            progressMessage: 'Waiting...', progressCurrent: 0, progressTotal: 1, resultCount: 0,
         };
-
-        setCurrentVideo(newItem);
-        setEnhancedImages([]);
-        setProcessingState('idle');
+        setConfiguringVideo(newItem);
     };
 
     const handleRemoveVideo = () => {
         setCurrentVideo(null);
         setEnhancedImages([]);
+        setExtractedFrames([]);
+        setSelectedFrameIds(new Set());
         setProcessingState('idle');
     };
 
@@ -342,18 +434,27 @@ const App: React.FC = () => {
     };
 
     const handleSaveConfiguration = (id: string, startTime: number, endTime: number) => {
-        updateCurrentVideo({ startTime, endTime });
+        if (currentVideo && currentVideo.id === id) {
+            updateCurrentVideo({ startTime, endTime });
+        } else if (configuringVideo) {
+            const newVideo = { ...configuringVideo, startTime, endTime };
+            setCurrentVideo(newVideo);
+            handleRemoveVideo(); // Reset everything else
+            setCurrentVideo(newVideo);
+        }
         setConfiguringVideo(null);
     };
 
-    const startProcessing = useCallback(async () => {
+    const handleExtractFrames = useCallback(async () => {
         if (!currentVideo) return;
         
         setProcessingState('processing');
+        setExtractedFrames([]);
+        setSelectedFrameIds(new Set());
         setEnhancedImages([]);
         
         const item = currentVideo;
-        updateCurrentVideo({ status: 'processing', progressMessage: 'Initializing...', resultCount: 0, thumbnailDataUrl: undefined });
+        updateCurrentVideo({ status: 'processing', progressMessage: 'Initializing for extraction...', resultCount: 0, thumbnailDataUrl: undefined });
 
         const videoUrl = URL.createObjectURL(item.file);
         const videoEl = document.createElement('video');
@@ -369,7 +470,7 @@ const App: React.FC = () => {
         } catch (e: any) {
             updateCurrentVideo({ status: 'error', error: e.toString() });
             URL.revokeObjectURL(videoUrl);
-            setProcessingState('done');
+            setProcessingState('idle');
             return;
         }
 
@@ -380,15 +481,14 @@ const App: React.FC = () => {
         if (segmentDuration <= 0) {
             updateCurrentVideo({ status: 'done', resultCount: 0, progressMessage: `Invalid or zero-length segment selected.` });
             URL.revokeObjectURL(videoUrl);
-            setProcessingState('done');
+            setProcessingState('idle');
             return;
         }
 
-        // 1. Frame Extraction
-        const totalFramesToExtract = Math.floor(segmentDuration * 4); // Extract 4 frames per second
-        updateCurrentVideo({ progressMessage: 'Step 1/3: Extracting frames...', progressCurrent: 0, progressTotal: totalFramesToExtract });
+        const totalFramesToExtract = Math.floor(segmentDuration * framesPerSecond);
+        updateCurrentVideo({ progressMessage: 'Extracting frames...', progressCurrent: 0, progressTotal: totalFramesToExtract });
         
-        const extractedFrames: ExtractedFrame[] = [];
+        const frames: ExtractedFrame[] = [];
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d', { willReadFrequently: true });
         
@@ -398,59 +498,54 @@ const App: React.FC = () => {
                 canvas.height = videoEl.videoHeight;
                 resolve();
             };
-            if (videoEl.readyState >= 1) { // HAVE_METADATA
-                setupCanvas();
-            } else {
-                videoEl.onloadedmetadata = setupCanvas;
-            }
+            if (videoEl.readyState >= 1) { setupCanvas(); } else { videoEl.onloadedmetadata = setupCanvas; }
         });
 
         for (let j = 0; j < totalFramesToExtract; j++) {
             const timeInSegment = (j / totalFramesToExtract) * segmentDuration;
             const time = startTime + timeInSegment;
             videoEl.currentTime = time;
-            await new Promise<void>(resolve => {
+
+            const dataUrl = await new Promise<string>(resolve => {
                 videoEl.onseeked = () => {
                     context?.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-                    extractedFrames.push({ timestamp: time, dataUrl });
-                    updateCurrentVideo({ progressCurrent: j + 1, thumbnailDataUrl: dataUrl });
-                    resolve();
+                    resolve(canvas.toDataURL('image/jpeg', 0.9));
                 };
             });
-        }
+            
+            updateCurrentVideo({ progressCurrent: j + 1, thumbnailDataUrl: dataUrl });
 
-        // 2. Face Filtering
-        updateCurrentVideo({ progressMessage: `Step 2/3: Filtering for ${genderFilter} faces...`, progressCurrent: 0, progressTotal: extractedFrames.length });
-        const filteredFrames: ExtractedFrame[] = [];
-        for (let j = 0; j < extractedFrames.length; j++) {
-            const frame = extractedFrames[j];
-            try {
-                const isMatch = await filterFrameByGender(frame.dataUrl, genderFilter);
-                if (isMatch) {
-                    filteredFrames.push(frame);
-                    updateCurrentVideo({ thumbnailDataUrl: frame.dataUrl });
+            if (gender === 'All') {
+                frames.push({ timestamp: time, dataUrl });
+            } else {
+                updateCurrentVideo({ progressMessage: `Filtering frame ${j + 1} for a ${gender.toLowerCase()} face...` });
+                const passesFilter = await filterFrameByGender(dataUrl, gender);
+                if (passesFilter) {
+                    frames.push({ timestamp: time, dataUrl });
                 }
-            } catch (filterError) {
-                console.error("Filtering error for a frame, skipping:", filterError);
             }
-            updateCurrentVideo({ progressCurrent: j + 1 });
         }
+        
+        setExtractedFrames(frames);
+        updateCurrentVideo({ status: 'queued', progressMessage: `${frames.length} frames found. Ready for selection.` });
+        URL.revokeObjectURL(videoUrl);
+        setProcessingState('idle');
+    }, [currentVideo, framesPerSecond, gender]);
 
-        if (filteredFrames.length === 0) {
-             updateCurrentVideo({ status: 'done', resultCount: 0, progressMessage: `No ${genderFilter} faces found.` });
-             URL.revokeObjectURL(videoUrl);
-             setProcessingState('done');
-             return;
-        }
+    const handleEnhanceFrames = useCallback(async () => {
+        const framesToEnhance = extractedFrames.filter(f => selectedFrameIds.has(f.timestamp));
+        if (framesToEnhance.length === 0 || !currentVideo) return;
 
-        // 3. Image Enhancement
-        updateCurrentVideo({ progressMessage: `Step 3/3: Enhancing ${filteredFrames.length} images...`, progressCurrent: 0, progressTotal: filteredFrames.length });
-        let referenceFrame: ExtractedFrame | undefined = filteredFrames[Math.floor(filteredFrames.length / 2)];
+        setProcessingState('processing');
+        setEnhancedImages([]);
+        
+        updateCurrentVideo({ status: 'processing', progressMessage: `Enhancing ${framesToEnhance.length} images...`, progressCurrent: 0, progressTotal: framesToEnhance.length });
+        
+        let referenceFrame: ExtractedFrame | undefined = framesToEnhance[Math.floor(framesToEnhance.length / 2)];
         
         const newImages: EnhancedImage[] = [];
-        for (let j = 0; j < filteredFrames.length; j++) {
-            const frame = filteredFrames[j];
+        for (let j = 0; j < framesToEnhance.length; j++) {
+            const frame = framesToEnhance[j];
             try {
                 const enhancedUrl = await enhanceImage(frame.dataUrl, referenceFrame?.dataUrl, shouldColorize);
                 if (enhancedUrl) {
@@ -466,111 +561,189 @@ const App: React.FC = () => {
         }
 
         updateCurrentVideo({ status: 'done', progressMessage: `Processing complete. Found ${newImages.length} images.` });
-        URL.revokeObjectURL(videoUrl);
         setProcessingState('done');
 
-    }, [currentVideo, genderFilter, shouldColorize]);
-    
+    }, [currentVideo, extractedFrames, selectedFrameIds, shouldColorize]);
 
-    if (!currentVideo) {
+    const handleFrameSelection = (timestamp: number) => {
+        setSelectedFrameIds(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(timestamp)) {
+                newSet.delete(timestamp);
+            } else {
+                newSet.add(timestamp);
+            }
+            return newSet;
+        });
+    };
+    
+    const renderInitialView = () => (
+        <main className="min-h-screen w-full flex flex-col items-center justify-center p-4 bg-gray-50">
+            <div className="text-center mb-8">
+                <h1 className="text-4xl md:text-5xl font-bold text-gray-900">Get Beautiful Images from Videos</h1>
+                <p className="mt-2 text-lg text-gray-600">Upload a video to extract, select, and enhance high-quality frames.</p>
+            </div>
+            <FileInput onFileSelect={handleFileSelect} disabled={processingState === 'processing'} />
+        </main>
+    );
+
+    const renderProcessingView = () => {
+        if (!currentVideo) return null;
+
+        const progressPercent = currentVideo.progressTotal > 0 ? (currentVideo.progressCurrent / currentVideo.progressTotal) * 100 : 0;
+        const isProcessing = processingState === 'processing';
+
         return (
-            <main className="min-h-screen w-full flex flex-col items-center justify-center p-4">
-                <div className="text-center mb-8">
-                    <h1 className="text-4xl md:text-5xl font-bold text-gray-900">Get Beautiful Images from Videos</h1>
-                    <p className="mt-2 text-lg text-gray-600">Upload a video to extract, filter, and enhance high-quality frames automatically.</p>
-                </div>
-                <FileInput onFileSelect={handleFileSelect} disabled={processingState === 'processing'} />
-            </main>
-        );
-    }
-    
-    const progressPercent = currentVideo.progressTotal > 0 ? (currentVideo.progressCurrent / currentVideo.progressTotal) * 100 : 0;
-    
-    return (
-        <div className="container mx-auto p-4 md:p-8 space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Left Column: Controls & Video Info */}
-                <div className="lg:col-span-1 space-y-6">
-                    {/* Controls */}
-                    <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200">
-                        <h3 className="text-lg font-bold text-gray-800 mb-4">Processing Options</h3>
-                        
-                        {/* Gender Filter */}
-                        <div className="mb-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Filter for faces:</label>
-                            <div className="flex gap-2">
-                                {(['Female', 'Male'] as Gender[]).map(g => (
-                                    <button key={g} onClick={() => setGenderFilter(g)} disabled={processingState === 'processing'}
-                                        className={`w-full py-2 text-sm font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${genderFilter === g ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-                                    >{g}</button>
-                                ))}
-                            </div>
-                        </div>
-                        
-                        {/* Colorize Toggle */}
-                        <div className="flex items-center justify-between">
-                            <label htmlFor="colorize" className="text-sm font-medium text-gray-700">Colorize if needed</label>
-                            <button
-                                id="colorize"
-                                role="switch"
-                                aria-checked={shouldColorize}
-                                onClick={() => setShouldColorize(!shouldColorize)}
-                                disabled={processingState === 'processing'}
-                                className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${shouldColorize ? 'bg-indigo-600' : 'bg-gray-200'}`}
-                            >
-                                <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${shouldColorize ? 'translate-x-6' : 'translate-x-1'}`} />
-                            </button>
-                        </div>
+            <main className="container mx-auto p-4 md:p-8">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
+                    <div>
+                        <h1 className="text-2xl md:text-3xl font-bold text-gray-800 break-all pr-4">{currentVideo.file.name}</h1>
+                        <p className="text-sm text-gray-500 mt-1">{formatBytes(currentVideo.file.size)}</p>
                     </div>
-
-                    {/* Video Info */}
-                    <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200">
-                        <div className="flex justify-between items-start mb-2">
-                            <h3 className="text-lg font-bold text-gray-800 break-all pr-2">{currentVideo.file.name}</h3>
-                             <button onClick={handleRemoveVideo} disabled={processingState === 'processing'} className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                            </button>
-                        </div>
-                         <div className="text-sm text-gray-500 mb-4">{formatBytes(currentVideo.file.size)}</div>
-
-                        <button onClick={() => setConfiguringVideo(currentVideo)} disabled={processingState === 'processing'} className="w-full text-center text-sm text-indigo-600 hover:text-indigo-800 font-semibold mb-4">
-                            {currentVideo.startTime !== undefined && currentVideo.endTime !== undefined
-                                ? `Segment: ${formatTime(currentVideo.startTime)} - ${formatTime(currentVideo.endTime)} (Click to edit)`
-                                : 'Select Segment (Optional)'
-                            }
-                        </button>
-
-                         {processingState !== 'idle' ? (
-                            <div className="space-y-2">
+                    <button 
+                        onClick={handleRemoveVideo} 
+                        disabled={isProcessing}
+                        className="mt-4 sm:mt-0 flex-shrink-0 px-4 py-2 bg-white text-gray-700 text-sm font-semibold border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                    >
+                        Change Video
+                    </button>
+                </div>
+    
+                {/* Main Content Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+                    
+                    {/* Left Column: Config Panel */}
+                    <div className="lg:col-span-1 bg-white p-6 rounded-xl shadow-lg border border-gray-200 space-y-6 sticky top-8">
+                        {extractedFrames.length === 0 ? (
+                             <>
+                                <h2 className="text-xl font-bold text-gray-800 border-b pb-4">Step 1: Extract Frames</h2>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Video Segment</label>
+                                    <button onClick={() => setConfiguringVideo(currentVideo)} disabled={isProcessing} className="w-full flex justify-between items-center text-left p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">
+                                        <div>
+                                            <span className="font-mono text-indigo-600">{formatTime(currentVideo.startTime ?? 0)}</span>
+                                            <span className="mx-2 text-gray-400">&rarr;</span>
+                                            <span className="font-mono text-indigo-600">{formatTime(currentVideo.endTime ?? 0)}</span>
+                                        </div>
+                                        <span className="text-sm font-semibold text-indigo-600">Edit</span>
+                                    </button>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Frames per Second</label>
+                                    <p className="text-xs text-gray-500 mb-2">Higher values find more frames but take longer to extract.</p>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {[1, 2, 4, 8].map(fps => (
+                                            <button key={fps} onClick={() => setFramesPerSecond(fps)} disabled={isProcessing}
+                                                className={`w-full py-2 text-sm font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${framesPerSecond === fps ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
+                                                {fps}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">AI Face Filter</label>
+                                    <p className="text-xs text-gray-500 mb-2">Find frames with a prominent face. 'All' skips this filter.</p>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {(['All', 'Male', 'Female'] as Gender[]).map(g => (
+                                            <button key={g} onClick={() => setGender(g)} disabled={isProcessing}
+                                                className={`w-full py-2 text-sm font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${gender === g ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
+                                                {g}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="pt-6 border-t border-gray-200">
+                                    <button onClick={handleExtractFrames} disabled={isProcessing} className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-lg disabled:bg-indigo-400">
+                                        {isProcessing ? <Loader /> : <PlayIcon className="w-6 h-6" />}
+                                        {isProcessing ? 'Extracting...' : 'Extract Frames'}
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <h2 className="text-xl font-bold text-gray-800 border-b pb-4">Step 2: Enhance Images</h2>
+                                <div className="p-3 bg-gray-50 rounded-lg text-center">
+                                    <p className="text-sm font-medium text-gray-800">Selected for Enhancement</p>
+                                    <p className="text-3xl font-bold text-indigo-600">{selectedFrameIds.size}</p>
+                                    <p className="text-xs text-gray-500">of {extractedFrames.length} frames</p>
+                                </div>
+                                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                    <label htmlFor="colorize" className="text-sm font-medium text-gray-700">Colorize if needed</label>
+                                    <button
+                                        id="colorize" role="switch" aria-checked={shouldColorize} onClick={() => setShouldColorize(!shouldColorize)} disabled={isProcessing}
+                                        className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${shouldColorize ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                                    >
+                                        <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${shouldColorize ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                </div>
+                                 <div className="pt-6 border-t border-gray-200">
+                                    <button onClick={handleEnhanceFrames} disabled={isProcessing || selectedFrameIds.size === 0} className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-lg disabled:bg-indigo-400 disabled:cursor-not-allowed">
+                                        {isProcessing ? <Loader /> : <PlayIcon className="w-6 h-6" />}
+                                        {isProcessing ? 'Enhancing...' : `Enhance ${selectedFrameIds.size} Frame${selectedFrameIds.size === 1 ? '' : 's'}`}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                        {isProcessing && (
+                             <div className="space-y-2 pt-6 border-t">
                                 <div className="text-sm font-medium text-gray-600">{currentVideo.progressMessage}</div>
                                 <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                    <div className="bg-indigo-600 h-2.5 rounded-full" style={{ width: `${progressPercent}%` }}></div>
+                                    <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
                                 </div>
                                 <div className="text-xs text-gray-500 text-right">{currentVideo.progressCurrent} / {currentVideo.progressTotal}</div>
                             </div>
+                        )}
+                    </div>
+    
+                    {/* Right Column: Results Panel */}
+                    <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border border-gray-200 min-h-[60vh] flex flex-col">
+                        {isProcessing ? (
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800 mb-4">Processing Preview...</h3>
+                                {currentVideo.thumbnailDataUrl ? (
+                                    <img src={currentVideo.thumbnailDataUrl} alt="Processing preview" className="w-full rounded-lg aspect-video object-contain bg-gray-100" />
+                                ) : (
+                                    <div className="w-full rounded-lg aspect-video bg-gray-100 flex items-center justify-center"><Loader /></div>
+                                )}
+                            </div>
+                        ) : processingState === 'done' && enhancedImages.length > 0 ? (
+                            <ImageGallery images={enhancedImages} onImageClick={setPreviewingImage} />
+                        ) : processingState === 'done' && enhancedImages.length === 0 ? (
+                            <div className="flex-grow flex flex-col items-center justify-center text-center text-gray-500">
+                                <ImageIcon className="w-20 h-20 text-gray-300 mb-4" />
+                                <h3 className="text-xl font-semibold">No Results Found</h3>
+                                <p className="mt-1 max-w-sm">{currentVideo.progressMessage || `Enhancement did not produce any images.`}</p>
+                            </div>
+                        ) : extractedFrames.length > 0 ? (
+                            <ExtractedFrameGallery 
+                                frames={extractedFrames} 
+                                selectedIds={selectedFrameIds} 
+                                onFrameSelect={handleFrameSelection} 
+                                onFramePreview={setPreviewingExtractedFrame} 
+                                onSelectAll={() => setSelectedFrameIds(new Set(extractedFrames.map(f => f.timestamp)))}
+                                onDeselectAll={() => setSelectedFrameIds(new Set())}
+                            />
                         ) : (
-                            <button onClick={startProcessing} className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors">
-                                Start Processing
-                            </button>
+                            <div className="flex-grow flex flex-col items-center justify-center text-center text-gray-500">
+                                <ImageIcon className="w-20 h-20 text-gray-300 mb-4" />
+                                <h3 className="text-xl font-semibold">Ready to Extract</h3>
+                                <p className="mt-1">Extracted frames will appear here for you to select.</p>
+                            </div>
                         )}
                     </div>
                 </div>
-
-                {/* Right Column: Gallery & Preview */}
-                <div className="lg:col-span-2">
-                    {processingState === 'processing' && currentVideo.thumbnailDataUrl && (
-                        <div className="mb-8 p-4 bg-white rounded-xl shadow-md border border-gray-200">
-                            <h3 className="text-lg font-bold text-gray-800 mb-4">Live Preview</h3>
-                            <img src={currentVideo.thumbnailDataUrl} alt="Processing preview" className="w-full rounded-lg aspect-video object-contain bg-gray-100" />
-                        </div>
-                    )}
-                    <ImageGallery images={enhancedImages} onImageClick={setPreviewingImage} />
-                </div>
-            </div>
-
+            </main>
+        );
+    };
+    
+    return (
+        <>
+            {!currentVideo ? renderInitialView() : renderProcessingView()}
             {configuringVideo && <SegmentSelectorModal item={configuringVideo} onClose={() => setConfiguringVideo(null)} onSave={handleSaveConfiguration} />}
             {previewingImage && <ImagePreviewModal image={previewingImage} onClose={() => setPreviewingImage(null)} />}
-        </div>
+            {previewingExtractedFrame && <ExtractedFramePreviewModal frame={previewingExtractedFrame} onClose={() => setPreviewingExtractedFrame(null)} />}
+        </>
     );
 };
 

@@ -9,7 +9,7 @@ export interface EnhancedImage {
   url: string;
 }
 
-export type Gender = 'Male' | 'Female';
+export type Gender = 'Male' | 'Female' | 'All';
 
 export type ProcessingState = 'idle' | 'processing' | 'done';
 

@@ -2,7 +2,8 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { Gender, ProcessingState, EnhancedImage, ExtractedFrame, VideoQueueItem } from './types';
 import { filterFrameByGender, enhanceImage } from './services/geminiService';
 import Loader from './components/Loader';
-import { DownloadIcon, ZipIcon, UploadIcon, PlayIcon, ImageIcon, CheckCircleIcon, SearchIcon } from './components/icons';
+import { DownloadIcon, ZipIcon, UploadIcon, PlayIcon, ImageIcon, CheckCircleIcon, SearchIcon, CropIcon } from './components/icons';
+import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from 'react-image-crop';
 
 // Make JSZip available in the window scope for TypeScript
 declare global {
@@ -332,6 +333,96 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onImageClick }) => 
     );
 };
 
+interface CropImageModalProps {
+    frame: ExtractedFrame;
+    onClose: () => void;
+    onSave: (timestamp: number, newDataUrl: string) => void;
+}
+const CropImageModal: React.FC<CropImageModalProps> = ({ frame, onClose, onSave }) => {
+    const imgRef = useRef<HTMLImageElement>(null);
+    const [crop, setCrop] = useState<Crop>();
+    const [completedCrop, setCompletedCrop] = useState<Crop>();
+
+    function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
+        const { width, height } = e.currentTarget;
+        const initialCrop = centerCrop(
+            makeAspectCrop({ unit: '%', width: 90 }, 1, width, height),
+            width,
+            height
+        );
+        setCrop(initialCrop);
+        setCompletedCrop(initialCrop);
+    }
+
+    const handleSaveCrop = async () => {
+        if (!completedCrop || !imgRef.current) {
+            console.error("Crop or image ref is not available.");
+            return;
+        }
+
+        const image = imgRef.current;
+        const canvas = document.createElement('canvas');
+        const scaleX = image.naturalWidth / image.width;
+        const scaleY = image.naturalHeight / image.height;
+        
+        canvas.width = Math.floor(completedCrop.width * scaleX);
+        canvas.height = Math.floor(completedCrop.height * scaleY);
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.error('Failed to get 2d context');
+            return;
+        }
+
+        ctx.drawImage(
+            image,
+            Math.floor(completedCrop.x * scaleX),
+            Math.floor(completedCrop.y * scaleY),
+            Math.floor(completedCrop.width * scaleX),
+            Math.floor(completedCrop.height * scaleY),
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+        
+        const base64Image = canvas.toDataURL('image/jpeg');
+        onSave(frame.timestamp, base64Image);
+    };
+
+    return (
+        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="crop-image-title">
+            <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-4xl w-full p-6" onClick={e => e.stopPropagation()}>
+                <h3 id="crop-image-title" className="text-lg font-bold text-indigo-600 mb-4">Crop Frame</h3>
+                <div className="flex justify-center bg-gray-100 p-2 rounded-lg">
+                    <ReactCrop
+                        crop={crop}
+                        onChange={c => setCrop(c)}
+                        onComplete={c => setCompletedCrop(c)}
+                    >
+                        <img
+                            ref={imgRef}
+                            alt="Frame to crop"
+                            src={frame.dataUrl}
+                            onLoad={onImageLoad}
+                            style={{ maxHeight: '60vh', objectFit: 'contain' }}
+                        />
+                    </ReactCrop>
+                </div>
+                 <div className="mt-6 flex justify-end gap-3">
+                     <button onClick={onClose} className="px-6 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400">
+                        Cancel
+                    </button>
+                    <button onClick={handleSaveCrop} className="px-6 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-indigo-500">
+                        Save Crop
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
 interface ExtractedFramePreviewModalProps {
     frame: ExtractedFrame;
     onClose: () => void;
@@ -354,10 +445,11 @@ interface ExtractedFrameGalleryProps {
     selectedIds: Set<number>;
     onFrameSelect: (timestamp: number) => void;
     onFramePreview: (frame: ExtractedFrame) => void;
+    onFrameCrop: (frame: ExtractedFrame) => void;
     onSelectAll: () => void;
     onDeselectAll: () => void;
 }
-const ExtractedFrameGallery: React.FC<ExtractedFrameGalleryProps> = ({ frames, selectedIds, onFrameSelect, onFramePreview, onSelectAll, onDeselectAll }) => {
+const ExtractedFrameGallery: React.FC<ExtractedFrameGalleryProps> = ({ frames, selectedIds, onFrameSelect, onFramePreview, onFrameCrop, onSelectAll, onDeselectAll }) => {
     return (
         <div className="w-full">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
@@ -376,9 +468,12 @@ const ExtractedFrameGallery: React.FC<ExtractedFrameGalleryProps> = ({ frames, s
                     return (
                         <div key={frame.timestamp} className="relative group bg-white rounded-lg overflow-hidden cursor-pointer" onClick={() => onFrameSelect(frame.timestamp)}>
                             <img src={frame.dataUrl} alt={`Extracted frame at ${frame.timestamp}`} className={`w-full h-40 object-cover transition-transform group-hover:scale-105 border-4 ${isSelected ? 'border-indigo-500' : 'border-transparent'}`} />
-                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center">
-                                <button onClick={(e) => { e.stopPropagation(); onFramePreview(frame); }} className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100">
+                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center gap-2">
+                                <button onClick={(e) => { e.stopPropagation(); onFramePreview(frame); }} className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100" aria-label="Preview frame">
                                     <SearchIcon className="h-6 w-6" />
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); onFrameCrop(frame); }} className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100" aria-label="Crop frame">
+                                    <CropIcon className="h-6 w-6" />
                                 </button>
                             </div>
                             {isSelected && (
@@ -411,6 +506,7 @@ const App: React.FC = () => {
     const [configuringVideo, setConfiguringVideo] = useState<VideoQueueItem | null>(null);
     const [previewingImage, setPreviewingImage] = useState<EnhancedImage | null>(null);
     const [previewingExtractedFrame, setPreviewingExtractedFrame] = useState<ExtractedFrame | null>(null);
+    const [croppingFrame, setCroppingFrame] = useState<ExtractedFrame | null>(null);
 
     const handleFileSelect = (file: File) => {
         if (!file.type.startsWith("video/")) return;
@@ -443,6 +539,15 @@ const App: React.FC = () => {
             setCurrentVideo(newVideo);
         }
         setConfiguringVideo(null);
+    };
+
+    const handleSaveCrop = (timestamp: number, newDataUrl: string) => {
+        setExtractedFrames(prevFrames =>
+            prevFrames.map(frame =>
+                frame.timestamp === timestamp ? { ...frame, dataUrl: newDataUrl } : frame
+            )
+        );
+        setCroppingFrame(null);
     };
 
     const handleExtractFrames = useCallback(async () => {
@@ -720,7 +825,8 @@ const App: React.FC = () => {
                                 frames={extractedFrames} 
                                 selectedIds={selectedFrameIds} 
                                 onFrameSelect={handleFrameSelection} 
-                                onFramePreview={setPreviewingExtractedFrame} 
+                                onFramePreview={setPreviewingExtractedFrame}
+                                onFrameCrop={setCroppingFrame} 
                                 onSelectAll={() => setSelectedFrameIds(new Set(extractedFrames.map(f => f.timestamp)))}
                                 onDeselectAll={() => setSelectedFrameIds(new Set())}
                             />
@@ -743,6 +849,7 @@ const App: React.FC = () => {
             {configuringVideo && <SegmentSelectorModal item={configuringVideo} onClose={() => setConfiguringVideo(null)} onSave={handleSaveConfiguration} />}
             {previewingImage && <ImagePreviewModal image={previewingImage} onClose={() => setPreviewingImage(null)} />}
             {previewingExtractedFrame && <ExtractedFramePreviewModal frame={previewingExtractedFrame} onClose={() => setPreviewingExtractedFrame(null)} />}
+            {croppingFrame && <CropImageModal frame={croppingFrame} onSave={handleSaveCrop} onClose={() => setCroppingFrame(null)} />}
         </>
     );
 };

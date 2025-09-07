@@ -31,13 +31,40 @@ const formatTime = (totalSeconds: number): string => {
     const paddedMinutes = minutes.toString().padStart(2, '0');
 
     if (hours > 0) {
-        return `${hours}:${paddedMinutes}:${paddedSeconds}`;
+        return `${hours.toString().padStart(2, '0')}:${paddedMinutes}:${paddedSeconds}`;
     }
     return `${paddedMinutes}:${paddedSeconds}`;
 };
 
+// --- Child Components ---
 
-// --- Child Components defined outside the main App component ---
+const downloadImage = (url: string, filename: string) => {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};
+
+const downloadFramesAsZip = async (frames: { url: string; filename: string }[], zipFilename: string): Promise<void> => {
+    if (!window.JSZip) {
+        alert('JSZip library not found.');
+        return;
+    }
+    const zip = new window.JSZip();
+    for (const frame of frames) {
+        try {
+            const response = await fetch(frame.url);
+            const blob = await response.blob();
+            zip.file(frame.filename, blob);
+        } catch (error) {
+            console.error(`Failed to fetch and add ${frame.filename} to zip`, error);
+        }
+    }
+    const content = await zip.generateAsync({ type: 'blob' });
+    downloadImage(URL.createObjectURL(content), zipFilename);
+};
 
 interface SegmentSelectorModalProps {
     item: VideoQueueItem;
@@ -50,26 +77,29 @@ const SegmentSelectorModal: React.FC<SegmentSelectorModalProps> = ({ item, onClo
     const [startTime, setStartTime] = useState(item.startTime ?? 0);
     const [endTime, setEndTime] = useState(item.endTime ?? 0);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
+    const [startTimeInput, setStartTimeInput] = useState(formatTime(item.startTime ?? 0));
+    const [endTimeInput, setEndTimeInput] = useState(formatTime(item.endTime ?? 0));
 
     useEffect(() => {
         const url = URL.createObjectURL(item.file);
         setVideoSrc(url);
-
         const video = document.createElement('video');
         video.src = url;
         video.onloadedmetadata = () => {
             const videoDuration = video.duration;
             setDuration(videoDuration);
-            setStartTime(item.startTime ?? 0);
-            setEndTime(item.endTime && item.endTime <= videoDuration ? item.endTime : videoDuration);
+            const initialStartTime = item.startTime ?? 0;
+            const initialEndTime = item.endTime && item.endTime <= videoDuration ? item.endTime : videoDuration;
+            setStartTime(initialStartTime);
+            setEndTime(initialEndTime);
         };
-
-        return () => {
-            URL.revokeObjectURL(url);
-        };
+        return () => URL.revokeObjectURL(url);
     }, [item]);
 
-    const handleTimeChange = (type: 'start' | 'end', value: number) => {
+    useEffect(() => setStartTimeInput(formatTime(startTime)), [startTime]);
+    useEffect(() => setEndTimeInput(formatTime(endTime)), [endTime]);
+
+    const handleSliderChange = (type: 'start' | 'end', value: number) => {
         if (type === 'start') {
             const newStartTime = Math.min(value, endTime);
             setStartTime(newStartTime);
@@ -80,613 +110,422 @@ const SegmentSelectorModal: React.FC<SegmentSelectorModalProps> = ({ item, onClo
             if (videoRef.current) videoRef.current.currentTime = newEndTime;
         }
     };
-
-    const handleSkip = (amount: number) => {
-        if (videoRef.current) {
-            const newTime = videoRef.current.currentTime + amount;
-            // Clamp the new time between 0 and the video's duration
-            videoRef.current.currentTime = Math.max(0, Math.min(duration, newTime));
-        }
+    
+    const parseTime = (timeString: string): number => {
+        const cleanedString = timeString.replace(/[^0-9:.]/g, '');
+        const parts = cleanedString.split(':').map(part => parseFloat(part)).reverse();
+        let seconds = 0;
+        if (parts.length > 0 && !isNaN(parts[0])) seconds += parts[0];
+        if (parts.length > 1 && !isNaN(parts[1])) seconds += parts[1] * 60;
+        if (parts.length > 2 && !isNaN(parts[2])) seconds += parts[2] * 3600;
+        return isNaN(seconds) ? 0 : seconds;
     };
     
-    const handleSave = () => {
-        onSave(item.id, startTime, endTime);
+    const handleTimeInputBlur = (type: 'start' | 'end') => {
+        if (type === 'start') {
+            let newTime = Math.max(0, Math.min(parseTime(startTimeInput), endTime, duration));
+            setStartTime(newTime);
+            if (videoRef.current) videoRef.current.currentTime = newTime;
+        } else {
+            let newTime = Math.min(duration, Math.max(parseTime(endTimeInput), startTime));
+            setEndTime(newTime);
+            if (videoRef.current) videoRef.current.currentTime = newTime;
+        }
     };
 
     const startPercent = duration > 0 ? (startTime / duration) * 100 : 0;
     const endPercent = duration > 0 ? (endTime / duration) * 100 : 0;
 
     return (
-        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="segment-selector-title">
-            <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-4xl w-full p-6 m-4" onClick={e => e.stopPropagation()}>
-                <h3 id="segment-selector-title" className="text-lg font-bold text-indigo-600">Select Video Segment</h3>
-                <p className="text-sm text-gray-500 truncate mb-4">{item.file.name}</p>
-
-                <video ref={videoRef} src={videoSrc ?? undefined} controls className="w-full rounded-lg bg-black mb-2 aspect-video"></video>
-                
-                <div className="flex items-center justify-center gap-4 mb-4">
-                    <button 
-                        onClick={() => handleSkip(-2)} 
-                        className="px-4 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        aria-label="Skip backward 2 seconds"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-                        </svg>
-                        -2s
-                    </button>
-                    <button 
-                        onClick={() => handleSkip(2)} 
-                        className="px-4 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        aria-label="Skip forward 2 seconds"
-                    >
-                        +2s
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                        </svg>
-                    </button>
-                </div>
-
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="segment-selector-title">
+            <div className="bg-slate-800 rounded-xl shadow-2xl border border-slate-700 max-w-4xl w-full p-6 m-4" onClick={e => e.stopPropagation()}>
+                <h3 id="segment-selector-title" className="text-lg font-bold text-teal-400">Select Video Segment</h3>
+                <p className="text-sm text-slate-400 truncate mb-4">{item.file.name}</p>
+                <video ref={videoRef} src={videoSrc ?? undefined} controls className="w-full rounded-lg bg-black mb-4 aspect-video"></video>
                 <div className="space-y-3">
-                    <div className="relative h-2 rounded-full bg-gray-200">
-                         <div className="absolute h-2 rounded-full bg-indigo-500" style={{ left: `${startPercent}%`, right: `${100 - endPercent}%` }}></div>
-                         <input type="range" min="0" max={duration} step="any" value={startTime} onChange={e => handleTimeChange('start', parseFloat(e.target.value))} className="absolute w-full h-2 top-0 bg-transparent pointer-events-none appearance-none a-input" />
-                         <input type="range" min="0" max={duration} step="any" value={endTime} onChange={e => handleTimeChange('end', parseFloat(e.target.value))} className="absolute w-full h-2 top-0 bg-transparent pointer-events-none appearance-none a-input"/>
+                    <div className="relative h-2 rounded-full bg-slate-600">
+                        <div className="absolute h-2 rounded-full bg-teal-500" style={{ left: `${startPercent}%`, right: `${100 - endPercent}%` }}></div>
+                        <input type="range" min="0" max={duration} step="any" value={startTime} onChange={e => handleSliderChange('start', parseFloat(e.target.value))} className="absolute w-full h-2 top-0 bg-transparent pointer-events-none appearance-none a-input" aria-label="Start time"/>
+                        <input type="range" min="0" max={duration} step="any" value={endTime} onChange={e => handleSliderChange('end', parseFloat(e.target.value))} className="absolute w-full h-2 top-0 bg-transparent pointer-events-none appearance-none a-input" aria-label="End time"/>
                     </div>
                     <style>{`
-                        input[type=range].a-input::-webkit-slider-thumb {
-                            -webkit-appearance: none;
-                            appearance: none;
-                            width: 20px;
-                            height: 20px;
-                            background: #fff;
-                            border-radius: 50%;
-                            cursor: pointer;
-                            border: 3px solid #6366f1;
-                            pointer-events: auto;
-                        }
-                        input[type=range].a-input::-moz-range-thumb {
-                           width: 14px;
-                           height: 14px;
-                           background: #fff;
-                           border-radius: 50%;
-                           cursor: pointer;
-                           border: 3px solid #6366f1;
-                           pointer-events: auto;
-                        }
+                        input[type=range].a-input::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; background: #fff; border-radius: 50%; cursor: pointer; border: 3px solid #14b8a6; pointer-events: auto; }
+                        input[type=range].a-input::-moz-range-thumb { width: 14px; height: 14px; background: #fff; border-radius: 50%; cursor: pointer; border: 3px solid #14b8a6; pointer-events: auto; }
                     `}</style>
-                    <div className="flex justify-between text-sm font-mono text-gray-700">
-                        <div>Start: <span className="font-bold text-indigo-600">{formatTime(startTime)}</span></div>
-                        <div>End: <span className="font-bold text-indigo-600">{formatTime(endTime)}</span></div>
+                    <div className="flex justify-between items-center text-sm font-mono text-slate-300">
+                        <div className="flex items-center gap-2"><label htmlFor="startTimeInput" className="font-bold">Start:</label><input id="startTimeInput" type="text" value={startTimeInput} onChange={e => setStartTimeInput(e.target.value)} onBlur={() => handleTimeInputBlur('start')} className="w-24 p-1.5 text-center bg-slate-900 border border-slate-600 rounded-md font-bold text-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-500"/></div>
+                        <div className="flex items-center gap-2"><label htmlFor="endTimeInput" className="font-bold">End:</label><input id="endTimeInput" type="text" value={endTimeInput} onChange={e => setEndTimeInput(e.target.value)} onBlur={() => handleTimeInputBlur('end')} className="w-24 p-1.5 text-center bg-slate-900 border border-slate-600 rounded-md font-bold text-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-500"/></div>
                     </div>
                 </div>
-
                 <div className="mt-6 flex justify-end gap-3">
-                     <button onClick={onClose} className="px-6 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400">
-                        Cancel
-                    </button>
-                    <button onClick={handleSave} className="px-6 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-indigo-500">
-                        Save Segment
-                    </button>
+                     <button onClick={onClose} className="px-6 py-2 bg-slate-700 text-slate-300 hover:bg-slate-600 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500">Cancel</button>
+                    <button onClick={() => onSave(item.id, startTime, endTime)} className="px-6 py-2 bg-teal-600 text-white hover:bg-teal-700 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">Save Segment</button>
                 </div>
             </div>
         </div>
     );
 };
 
-interface FileInputProps {
-    onFileSelect: (file: File) => void;
-    disabled: boolean;
-}
+interface FileInputProps { onFileSelect: (file: File) => void; disabled: boolean; }
 const FileInput: React.FC<FileInputProps> = ({ onFileSelect, disabled }) => {
-    const inputRef = useRef<HTMLInputElement>(null);
     const [isDragging, setIsDragging] = useState(false);
-
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files.length > 0) {
-            onFileSelect(e.target.files[0]);
-            e.target.value = '';
-        }
-    };
-    const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(false);
-        if (disabled) return;
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            onFileSelect(e.dataTransfer.files[0]);
-        }
-    };
-    const handleDragOver = (e: React.DragEvent<HTMLLabelElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!disabled) {
-            setIsDragging(true);
-        }
-    };
-    const handleDragLeave = (e: React.DragEvent<HTMLLabelElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(false);
-    };
-
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { if (e.target.files?.[0]) { onFileSelect(e.target.files[0]); e.target.value = ''; } };
+    const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); if (!disabled && e.dataTransfer.files?.[0]) onFileSelect(e.dataTransfer.files[0]); };
+    const handleDragOver = (e: React.DragEvent<HTMLLabelElement>) => { e.preventDefault(); e.stopPropagation(); if (!disabled) setIsDragging(true); };
     return (
         <div className="w-full max-w-4xl mx-auto">
-            <label
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                className={`relative group flex flex-col items-center justify-center w-full min-h-[40vh] p-8 text-center bg-white border-2 border-dashed border-gray-300 rounded-2xl cursor-pointer transition-all duration-300 hover:border-indigo-400 hover:bg-gray-50 ${isDragging ? 'border-indigo-500 bg-indigo-50 scale-105' : ''} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-                <div className="flex flex-col items-center justify-center space-y-4 text-gray-600 transition-transform duration-300 group-hover:-translate-y-2">
-                    <UploadIcon className="w-16 h-16 text-gray-400" />
-                    <p className="text-xl font-semibold">
-                        Drop your video here, or <span className="font-bold text-indigo-600">click to browse</span>
-                    </p>
-                    <p className="text-sm text-gray-500">Supports MP4, WebM, Ogg formats</p>
+            <label onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={() => setIsDragging(false)} className={`relative group flex flex-col items-center justify-center w-full min-h-[40vh] p-8 text-center bg-slate-800/50 border-2 border-dashed border-slate-700 rounded-2xl cursor-pointer transition-all duration-300 hover:border-teal-500 hover:bg-slate-800 ${isDragging ? 'border-teal-500 bg-slate-800 scale-105' : ''} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <div className="flex flex-col items-center justify-center space-y-4 text-slate-400 transition-transform duration-300 group-hover:-translate-y-2">
+                    <UploadIcon className="w-16 h-16 text-slate-500" />
+                    <p className="text-xl font-semibold">Drop your video here, or <span className="font-bold text-teal-400">click to browse</span></p>
+                    <p className="text-sm text-slate-500">Supports MP4, WebM, Ogg formats</p>
                 </div>
-                <input
-                    ref={inputRef}
-                    type="file"
-                    name="file_upload"
-                    className="hidden"
-                    accept="video/*"
-                    onChange={handleFileChange}
-                    disabled={disabled}
-                />
+                <input type="file" className="hidden" accept="video/*" onChange={handleFileChange} disabled={disabled} />
             </label>
         </div>
     );
 };
 
-const downloadImage = (url: string, filename: string) => {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-};
-
-interface ImagePreviewModalProps {
-    image: EnhancedImage;
-    onClose: () => void;
-}
-const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ image, onClose }) => {
-    const handleDownload = () => {
-        downloadImage(image.url, `enhanced_frame_${image.originalTimestamp.toFixed(2)}.jpg`);
-    };
-
+interface ImagePreviewModalProps { image: EnhancedImage | ExtractedFrame; onClose: () => void; isEnhanced: boolean; }
+const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ image, onClose, isEnhanced }) => {
+    const url = 'dataUrl' in image ? image.dataUrl : image.url;
+    const timestamp = 'originalTimestamp' in image ? image.originalTimestamp : image.timestamp;
+    const handleDownload = () => downloadImage(url, `${isEnhanced ? 'enhanced' : 'extracted'}_frame_${timestamp.toFixed(2)}.jpg`);
     return (
-        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-4xl w-full p-4 relative" onClick={e => e.stopPropagation()}>
-                <img src={image.url} alt={`Preview of enhanced frame at ${image.originalTimestamp}`} className="w-full h-auto max-h-[75vh] object-contain rounded-lg"/>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-slate-800 rounded-xl shadow-2xl border border-slate-700 max-w-4xl w-full p-4 relative" onClick={e => e.stopPropagation()}>
+                <img src={url} alt={`Preview of frame at ${timestamp}`} className="w-full h-auto max-h-[75vh] object-contain rounded-lg"/>
                 <div className="mt-4 flex justify-center items-center gap-4">
-                     <button onClick={onClose} className="px-6 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400">
-                        Close
-                    </button>
-                    <button onClick={handleDownload} className="flex items-center px-6 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-indigo-500">
-                        <DownloadIcon className="w-5 h-5 mr-2" />
-                        Download
-                    </button>
+                     <button onClick={onClose} className="px-6 py-2 bg-slate-700 text-slate-300 hover:bg-slate-600 rounded-lg font-semibold transition-colors">Close</button>
+                    {isEnhanced && <button onClick={handleDownload} className="flex items-center px-6 py-2 bg-teal-600 text-white hover:bg-teal-700 rounded-lg font-semibold transition-colors"><DownloadIcon className="w-5 h-5 mr-2" />Download</button>}
                 </div>
             </div>
         </div>
     );
 };
 
-
-interface ImageGalleryProps {
-    images: EnhancedImage[];
-    onImageClick: (image: EnhancedImage) => void;
-}
+interface ImageGalleryProps { images: EnhancedImage[]; onImageClick: (image: EnhancedImage) => void; }
 const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onImageClick }) => {
     const [isZipping, setIsZipping] = useState(false);
-
-    const downloadAllAsZip = async () => {
-        if (!window.JSZip) {
-            alert('JSZip library not found.');
-            return;
-        }
+    const downloadAll = async () => {
         setIsZipping(true);
-        try {
-            const zip = new window.JSZip();
-            for (let i = 0; i < images.length; i++) {
-                const image = images[i];
-                const response = await fetch(image.url);
-                const blob = await response.blob();
-                zip.file(`enhanced_frame_${image.originalTimestamp.toFixed(2)}.jpg`, blob);
-            }
-            const content = await zip.generateAsync({ type: 'blob' });
-            downloadImage(URL.createObjectURL(content), 'enhanced_frames.zip');
-        } catch (error) {
-            console.error("Failed to create zip file", error);
-        } finally {
-            setIsZipping(false);
-        }
+        await downloadFramesAsZip(images.map(img => ({ url: img.url, filename: `enhanced_frame_${img.originalTimestamp.toFixed(2)}.jpg` })), 'enhanced_frames.zip');
+        setIsZipping(false);
     };
-
     return (
         <div className="w-full">
             <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-800">Results ({images.length})</h2>
-                {images.length > 0 && (
-                    <button onClick={downloadAllAsZip} disabled={isZipping} className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed transition-colors font-semibold">
-                        {isZipping ? <Loader /> : <ZipIcon className="w-5 h-5 mr-2" />}
-                        {isZipping ? 'Zipping...' : 'Download All'}
-                    </button>
-                )}
+                <h2 className="text-3xl font-bold text-white">Results ({images.length})</h2>
+                {images.length > 0 && <button onClick={downloadAll} disabled={isZipping} className="flex items-center px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:bg-teal-400 font-semibold"><ZipIcon className="w-5 h-5 mr-2" />{isZipping ? 'Zipping...' : 'Download All'}</button>}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {images.map(image => (
-                    <div key={image.id} className="relative group bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm cursor-pointer" onClick={() => onImageClick(image)}>
-                        <img src={image.url} alt={`Enhanced frame at ${image.originalTimestamp}`} className="w-full h-40 object-cover transition-transform group-hover:scale-105" />
-                         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center">
-                            <div className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all">
-                                <SearchIcon className="h-6 w-6" />
-                            </div>
-                        </div>
-                    </div>
-                ))}
+                {images.map(image => (<div key={image.id} className="relative group bg-slate-700 border border-slate-600 rounded-lg overflow-hidden shadow-sm cursor-pointer" onClick={() => onImageClick(image)}><img src={image.url} alt={`Enhanced frame at ${image.originalTimestamp}`} className="w-full h-40 object-cover transition-transform group-hover:scale-105" /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center"><div className="p-2 bg-black/30 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all"><SearchIcon className="h-6 w-6" /></div></div></div>))}
             </div>
         </div>
     );
 };
 
-interface CropImageModalProps {
-    frame: ExtractedFrame;
-    onClose: () => void;
-    onSave: (timestamp: number, newDataUrl: string) => void;
-}
+interface CropImageModalProps { frame: ExtractedFrame; onClose: () => void; onSave: (timestamp: number, newDataUrl: string) => void; }
 const CropImageModal: React.FC<CropImageModalProps> = ({ frame, onClose, onSave }) => {
     const imgRef = useRef<HTMLImageElement>(null);
     const [crop, setCrop] = useState<Crop>();
     const [completedCrop, setCompletedCrop] = useState<Crop>();
-
-    function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
-        const { width, height } = e.currentTarget;
-        const initialCrop = centerCrop(
-            makeAspectCrop({ unit: '%', width: 90 }, 1, width, height),
-            width,
-            height
-        );
-        setCrop(initialCrop);
-        setCompletedCrop(initialCrop);
-    }
-
+    const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => { const { width, height } = e.currentTarget; setCrop(centerCrop(makeAspectCrop({ unit: '%', width: 90 }, 1, width, height), width, height)); };
     const handleSaveCrop = async () => {
-        if (!completedCrop || !imgRef.current) {
-            console.error("Crop or image ref is not available.");
-            return;
-        }
-
-        const image = imgRef.current;
-        const canvas = document.createElement('canvas');
-        const scaleX = image.naturalWidth / image.width;
-        const scaleY = image.naturalHeight / image.height;
-        
-        canvas.width = Math.floor(completedCrop.width * scaleX);
-        canvas.height = Math.floor(completedCrop.height * scaleY);
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            console.error('Failed to get 2d context');
-            return;
-        }
-
-        ctx.drawImage(
-            image,
-            Math.floor(completedCrop.x * scaleX),
-            Math.floor(completedCrop.y * scaleY),
-            Math.floor(completedCrop.width * scaleX),
-            Math.floor(completedCrop.height * scaleY),
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-        
-        const base64Image = canvas.toDataURL('image/jpeg');
-        onSave(frame.timestamp, base64Image);
+        if (!completedCrop || !imgRef.current) return;
+        const image = imgRef.current, canvas = document.createElement('canvas'), scaleX = image.naturalWidth / image.width, scaleY = image.naturalHeight / image.height;
+        canvas.width = Math.floor(completedCrop.width * scaleX); canvas.height = Math.floor(completedCrop.height * scaleY);
+        const ctx = canvas.getContext('2d'); if (!ctx) return;
+        ctx.drawImage(image, Math.floor(completedCrop.x * scaleX), Math.floor(completedCrop.y * scaleY), Math.floor(completedCrop.width * scaleX), Math.floor(completedCrop.height * scaleY), 0, 0, canvas.width, canvas.height);
+        onSave(frame.timestamp, canvas.toDataURL('image/jpeg'));
     };
-
-    return (
-        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="crop-image-title">
-            <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-4xl w-full p-6" onClick={e => e.stopPropagation()}>
-                <h3 id="crop-image-title" className="text-lg font-bold text-indigo-600 mb-4">Crop Frame</h3>
-                <div className="flex justify-center bg-gray-100 p-2 rounded-lg">
-                    <ReactCrop
-                        crop={crop}
-                        onChange={c => setCrop(c)}
-                        onComplete={c => setCompletedCrop(c)}
-                    >
-                        <img
-                            ref={imgRef}
-                            alt="Frame to crop"
-                            src={frame.dataUrl}
-                            onLoad={onImageLoad}
-                            style={{ maxHeight: '60vh', objectFit: 'contain' }}
-                        />
-                    </ReactCrop>
-                </div>
-                 <div className="mt-6 flex justify-end gap-3">
-                     <button onClick={onClose} className="px-6 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400">
-                        Cancel
-                    </button>
-                    <button onClick={handleSaveCrop} className="px-6 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-indigo-500">
-                        Save Crop
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
+    return (<div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={onClose}><div className="bg-slate-800 rounded-xl shadow-2xl border border-slate-700 max-w-4xl w-full p-6" onClick={e => e.stopPropagation()}><h3 className="text-lg font-bold text-teal-400 mb-4">Crop Frame</h3><div className="flex justify-center bg-slate-900 p-2 rounded-lg"><ReactCrop crop={crop} onChange={c => setCrop(c)} onComplete={c => setCompletedCrop(c)}><img ref={imgRef} alt="Frame to crop" src={frame.dataUrl} onLoad={onImageLoad} style={{ maxHeight: '60vh', objectFit: 'contain' }} /></ReactCrop></div><div className="mt-6 flex justify-end gap-3"><button onClick={onClose} className="px-6 py-2 bg-slate-700 text-slate-300 hover:bg-slate-600 rounded-lg font-semibold">Cancel</button><button onClick={handleSaveCrop} className="px-6 py-2 bg-teal-600 text-white hover:bg-teal-700 rounded-lg font-semibold">Save Crop</button></div></div></div>);
 };
 
-
-interface ExtractedFramePreviewModalProps {
-    frame: ExtractedFrame;
-    onClose: () => void;
-}
-const ExtractedFramePreviewModal: React.FC<ExtractedFramePreviewModalProps> = ({ frame, onClose }) => (
-    <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={onClose}>
-        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 max-w-4xl w-full p-4 relative" onClick={e => e.stopPropagation()}>
-            <img src={frame.dataUrl} alt={`Preview of frame at ${frame.timestamp.toFixed(2)}s`} className="w-full h-auto max-h-[75vh] object-contain rounded-lg"/>
-            <div className="mt-4 flex justify-center items-center">
-                 <button onClick={onClose} className="px-6 py-2 bg-gray-100 text-gray-800 hover:bg-gray-200 rounded-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400">
-                    Close
-                </button>
-            </div>
-        </div>
-    </div>
-);
-
-interface ExtractedFrameGalleryProps {
-    frames: ExtractedFrame[];
-    selectedIds: Set<number>;
-    onFrameSelect: (timestamp: number) => void;
-    onFramePreview: (frame: ExtractedFrame) => void;
-    onFrameCrop: (frame: ExtractedFrame) => void;
-    onSelectAll: () => void;
-    onDeselectAll: () => void;
-}
+const MAX_SELECTED_FRAMES = 8;
+interface ExtractedFrameGalleryProps { frames: ExtractedFrame[]; selectedIds: Set<number>; onFrameSelect: (timestamp: number) => void; onFramePreview: (frame: ExtractedFrame) => void; onFrameCrop: (frame: ExtractedFrame) => void; onSelectAll: () => void; onDeselectAll: () => void; }
 const ExtractedFrameGallery: React.FC<ExtractedFrameGalleryProps> = ({ frames, selectedIds, onFrameSelect, onFramePreview, onFrameCrop, onSelectAll, onDeselectAll }) => {
+    const isSelectionLimited = selectedIds.size >= MAX_SELECTED_FRAMES;
+    const [isZipping, setIsZipping] = useState(false);
+    const downloadAll = async () => {
+        setIsZipping(true);
+        await downloadFramesAsZip(frames.map(f => ({ url: f.dataUrl, filename: `extracted_frame_${f.timestamp.toFixed(2)}.jpg` })), 'extracted_frames.zip');
+        setIsZipping(false);
+    };
     return (
         <div className="w-full">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-gray-800">Select Frames to Enhance</h2>
-                    <p className="text-sm text-gray-500">{frames.length} frames found. {selectedIds.size} selected.</p>
-                </div>
-                 <div className="flex-shrink-0 flex gap-2">
-                    <button onClick={onSelectAll} className="px-3 py-1.5 text-sm font-semibold bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors">Select All</button>
-                    <button onClick={onDeselectAll} className="px-3 py-1.5 text-sm font-semibold bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors">Deselect All</button>
-                </div>
+                <div><h2 className="text-3xl font-bold text-white">Select Frames to Enhance</h2><p className="text-sm text-slate-400">{frames.length} frames found. {selectedIds.size} / {MAX_SELECTED_FRAMES} selected.</p></div>
+                <div className="flex-shrink-0 flex gap-2"><button onClick={onSelectAll} className="px-3 py-1.5 text-sm font-semibold bg-slate-700 text-slate-300 rounded-md hover:bg-slate-600">Select All</button><button onClick={onDeselectAll} className="px-3 py-1.5 text-sm font-semibold bg-slate-700 text-slate-300 rounded-md hover:bg-slate-600">Deselect All</button><button onClick={downloadAll} disabled={isZipping} className="flex items-center px-3 py-1.5 text-sm font-semibold bg-teal-500/20 text-teal-300 rounded-md hover:bg-teal-500/30 disabled:opacity-50"><ZipIcon className="w-4 h-4 mr-1.5" />{isZipping ? 'Zipping...' : 'Download All'}</button></div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {frames.map(frame => {
                     const isSelected = selectedIds.has(frame.timestamp);
-                    return (
-                        <div key={frame.timestamp} className="relative group bg-white rounded-lg overflow-hidden cursor-pointer" onClick={() => onFrameSelect(frame.timestamp)}>
-                            <img src={frame.dataUrl} alt={`Extracted frame at ${frame.timestamp}`} className={`w-full h-40 object-cover transition-transform group-hover:scale-105 border-4 ${isSelected ? 'border-indigo-500' : 'border-transparent'}`} />
-                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center gap-2">
-                                <button onClick={(e) => { e.stopPropagation(); onFramePreview(frame); }} className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100" aria-label="Preview frame">
-                                    <SearchIcon className="h-6 w-6" />
-                                </button>
-                                <button onClick={(e) => { e.stopPropagation(); onFrameCrop(frame); }} className="p-2 bg-white/20 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100" aria-label="Crop frame">
-                                    <CropIcon className="h-6 w-6" />
-                                </button>
-                            </div>
-                            {isSelected && (
-                                <div className="absolute top-2 right-2 text-indigo-500 bg-white rounded-full">
-                                    <CheckCircleIcon className="w-6 h-6" />
-                                </div>
-                            )}
+                    return (<div key={frame.timestamp} className={`relative group bg-slate-700 rounded-lg overflow-hidden ${!isSelected && isSelectionLimited ? 'cursor-not-allowed' : 'cursor-pointer'}`} onClick={() => onFrameSelect(frame.timestamp)}>
+                        <img src={frame.dataUrl} alt={`Extracted frame at ${frame.timestamp}`} className={`w-full h-40 object-cover transition-transform group-hover:scale-105 border-4 ${isSelected ? 'border-teal-500' : 'border-slate-700'} ${!isSelected && isSelectionLimited ? 'opacity-50' : ''}`} />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center gap-2">
+                            <button onClick={(e) => { e.stopPropagation(); onFramePreview(frame); }} className="p-2 bg-black/30 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100" aria-label="Preview frame"><SearchIcon className="h-6 w-6" /></button>
+                            <button onClick={(e) => { e.stopPropagation(); onFrameCrop(frame); }} className="p-2 bg-black/30 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all focus:opacity-100" aria-label="Crop frame"><CropIcon className="h-6 w-6" /></button>
                         </div>
-                    )
+                        {isSelected && (<div className="absolute top-2 right-2 text-teal-400 bg-slate-800 rounded-full"><CheckCircleIcon className="w-6 h-6" /></div>)}
+                    </div>)
                 })}
             </div>
         </div>
     );
 };
 
-
 // --- Main App Component ---
-
 const App: React.FC = () => {
     const [currentVideo, setCurrentVideo] = useState<VideoQueueItem | null>(null);
+    const [videoSrc, setVideoSrc] = useState<string | null>(null);
     const [shouldColorize, setShouldColorize] = useState<boolean>(true);
     const [framesPerSecond, setFramesPerSecond] = useState<number>(4);
     const [gender, setGender] = useState<Gender>('All');
     const [processingState, setProcessingState] = useState<ProcessingState>('idle');
-
     const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
     const [selectedFrameIds, setSelectedFrameIds] = useState<Set<number>>(new Set());
     const [enhancedImages, setEnhancedImages] = useState<EnhancedImage[]>([]);
-
+    const [framesBeingEnhanced, setFramesBeingEnhanced] = useState<ExtractedFrame[]>([]);
     const [configuringVideo, setConfiguringVideo] = useState<VideoQueueItem | null>(null);
-    const [previewingImage, setPreviewingImage] = useState<EnhancedImage | null>(null);
-    const [previewingExtractedFrame, setPreviewingExtractedFrame] = useState<ExtractedFrame | null>(null);
+    const [previewingImage, setPreviewingImage] = useState<EnhancedImage | ExtractedFrame | null>(null);
     const [croppingFrame, setCroppingFrame] = useState<ExtractedFrame | null>(null);
+    const isCancelledRef = useRef(false);
+    const videoPreviewRef = useRef<HTMLVideoElement>(null);
+    const isProcessing = processingState === 'processing';
 
+    const resetProcessingResults = () => {
+        setExtractedFrames([]);
+        setSelectedFrameIds(new Set());
+        setEnhancedImages([]);
+        setFramesBeingEnhanced([]);
+    };
+
+    const resetStateForNewVideo = () => {
+        resetProcessingResults();
+        setProcessingState('idle');
+    };
+    
     const handleFileSelect = (file: File) => {
-        if (!file.type.startsWith("video/")) return;
-        const newItem: VideoQueueItem = {
-            id: `${file.name}-${file.lastModified}-${file.size}`, file, status: 'queued',
-            progressMessage: 'Waiting...', progressCurrent: 0, progressTotal: 1, resultCount: 0,
+        if (!file.type.startsWith("video/")) {
+            alert("Please select a valid video file.");
+            return;
+        }
+
+        if (videoSrc) {
+            URL.revokeObjectURL(videoSrc);
+            setVideoSrc(null);
+        }
+    
+        const newVideoUrl = URL.createObjectURL(file);
+        const tempVideo = document.createElement('video');
+        tempVideo.src = newVideoUrl;
+    
+        const cleanupAndProceed = (duration: number | null) => {
+            if (duration !== null) {
+                const newItem: VideoQueueItem = {
+                    id: `${file.name}-${file.lastModified}`,
+                    file,
+                    status: 'queued',
+                    progressMessage: 'Waiting...',
+                    progressCurrent: 0,
+                    progressTotal: 1,
+                    resultCount: 0,
+                    startTime: 0,
+                    endTime: duration,
+                };
+                setCurrentVideo(newItem);
+                setConfiguringVideo(newItem);
+                setVideoSrc(newVideoUrl);
+                resetStateForNewVideo();
+            } else {
+                alert('Could not read video metadata. The file might be corrupt or in an unsupported format.');
+                URL.revokeObjectURL(newVideoUrl);
+            }
+    
+            tempVideo.removeEventListener('loadedmetadata', onMetadataLoaded);
+            tempVideo.removeEventListener('error', onError);
         };
-        setConfiguringVideo(newItem);
+        
+        const onMetadataLoaded = () => {
+            cleanupAndProceed(tempVideo.duration);
+        };
+    
+        const onError = () => {
+            cleanupAndProceed(null);
+        };
+    
+        tempVideo.addEventListener('loadedmetadata', onMetadataLoaded);
+        tempVideo.addEventListener('error', onError);
     };
 
     const handleRemoveVideo = () => {
-        setCurrentVideo(null);
-        setEnhancedImages([]);
-        setExtractedFrames([]);
-        setSelectedFrameIds(new Set());
-        setProcessingState('idle');
-    };
-
-    const updateCurrentVideo = (updates: Partial<VideoQueueItem>) => {
-        setCurrentVideo(prev => (prev ? { ...prev, ...updates } : null));
-    };
-
-    const handleSaveConfiguration = (id: string, startTime: number, endTime: number) => {
-        if (currentVideo && currentVideo.id === id) {
-            updateCurrentVideo({ startTime, endTime });
-        } else if (configuringVideo) {
-            const newVideo = { ...configuringVideo, startTime, endTime };
-            setCurrentVideo(newVideo);
-            handleRemoveVideo(); // Reset everything else
-            setCurrentVideo(newVideo);
+        if (videoSrc) {
+            URL.revokeObjectURL(videoSrc);
         }
+        setVideoSrc(null);
+        setCurrentVideo(null);
+        resetStateForNewVideo();
+    };
+    const updateCurrentVideo = (updates: Partial<VideoQueueItem>) => setCurrentVideo(prev => (prev ? { ...prev, ...updates } : null));
+    const handleSaveConfiguration = (id: string, startTime: number, endTime: number) => {
+        if (currentVideo && currentVideo.id === id) updateCurrentVideo({ startTime, endTime });
         setConfiguringVideo(null);
     };
-
     const handleSaveCrop = (timestamp: number, newDataUrl: string) => {
-        setExtractedFrames(prevFrames =>
-            prevFrames.map(frame =>
-                frame.timestamp === timestamp ? { ...frame, dataUrl: newDataUrl } : frame
-            )
-        );
+        setExtractedFrames(prev => prev.map(f => f.timestamp === timestamp ? { ...f, dataUrl: newDataUrl } : f));
         setCroppingFrame(null);
     };
+    const handleCancel = () => { isCancelledRef.current = true; updateCurrentVideo({ progressMessage: 'Cancelling...' }); };
 
     const handleExtractFrames = useCallback(async () => {
-        if (!currentVideo) return;
-        
+        if (!currentVideo || !videoPreviewRef.current || !videoSrc) return;
+        isCancelledRef.current = false;
         setProcessingState('processing');
-        setExtractedFrames([]);
-        setSelectedFrameIds(new Set());
-        setEnhancedImages([]);
-        
-        const item = currentVideo;
-        updateCurrentVideo({ status: 'processing', progressMessage: 'Initializing for extraction...', resultCount: 0, thumbnailDataUrl: undefined });
+        resetProcessingResults();
+        updateCurrentVideo({ status: 'processing', progressMessage: 'Initializing...', resultCount: 0, thumbnailDataUrl: undefined });
 
-        const videoUrl = URL.createObjectURL(item.file);
-        const videoEl = document.createElement('video');
+        const videoEl = videoPreviewRef.current;
         videoEl.muted = true;
-        videoEl.src = videoUrl;
-        
-        let duration = 0;
+
+        const cleanup = () => {
+            setProcessingState('idle');
+        };
+
         try {
-             duration = await new Promise<number>((resolve, reject) => {
-                videoEl.onloadedmetadata = () => resolve(videoEl.duration);
-                videoEl.onerror = () => reject('Failed to load video metadata.');
-            });
+            if (videoEl.readyState < videoEl.HAVE_METADATA) {
+                await new Promise<void>((resolve, reject) => {
+                    videoEl.onloadedmetadata = () => resolve();
+                    videoEl.onerror = () => reject('Failed to load video metadata.');
+                });
+            }
         } catch (e: any) {
             updateCurrentVideo({ status: 'error', error: e.toString() });
-            URL.revokeObjectURL(videoUrl);
-            setProcessingState('idle');
+            cleanup();
             return;
         }
 
-        const startTime = item.startTime ?? 0;
-        const endTime = item.endTime ?? duration;
+        const startTime = currentVideo.startTime ?? 0;
+        const endTime = currentVideo.endTime ?? videoEl.duration;
         const segmentDuration = endTime - startTime;
 
         if (segmentDuration <= 0) {
-            updateCurrentVideo({ status: 'done', resultCount: 0, progressMessage: `Invalid or zero-length segment selected.` });
-            URL.revokeObjectURL(videoUrl);
-            setProcessingState('idle');
+            updateCurrentVideo({ status: 'done', progressMessage: `Invalid segment selected.` });
+            cleanup();
             return;
         }
-
-        const totalFramesToExtract = Math.floor(segmentDuration * framesPerSecond);
-        updateCurrentVideo({ progressMessage: 'Extracting frames...', progressCurrent: 0, progressTotal: totalFramesToExtract });
         
-        const frames: ExtractedFrame[] = [];
+        const frameInterval = 1 / framesPerSecond;
+        const totalFramesToProcess = Math.floor(segmentDuration / frameInterval);
+
+        updateCurrentVideo({ progressMessage: `Analyzing video...`, progressCurrent: 0, progressTotal: totalFramesToProcess });
+        
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+             updateCurrentVideo({ status: 'error', error: 'Could not create canvas context.' });
+             cleanup();
+             return;
+        }
+
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
         
-        await new Promise<void>(resolve => {
-            const setupCanvas = () => {
-                canvas.width = videoEl.videoWidth;
-                canvas.height = videoEl.videoHeight;
+        let foundFramesCount = 0;
+
+        const seekPromise = (time: number): Promise<void> => new Promise((resolve, reject) => {
+            const onSeeked = () => {
+                videoEl.removeEventListener('seeked', onSeeked);
+                videoEl.removeEventListener('error', onError);
                 resolve();
             };
-            if (videoEl.readyState >= 1) { setupCanvas(); } else { videoEl.onloadedmetadata = setupCanvas; }
+            const onError = (e: Event) => {
+                videoEl.removeEventListener('seeked', onSeeked);
+                videoEl.removeEventListener('error', onError);
+                reject(`Error seeking video to ${time}: ${e}`);
+            };
+            videoEl.addEventListener('seeked', onSeeked);
+            videoEl.addEventListener('error', onError);
+            videoEl.currentTime = time;
         });
 
-        for (let j = 0; j < totalFramesToExtract; j++) {
-            const timeInSegment = (j / totalFramesToExtract) * segmentDuration;
-            const time = startTime + timeInSegment;
-            videoEl.currentTime = time;
-
-            const dataUrl = await new Promise<string>(resolve => {
-                videoEl.onseeked = () => {
-                    context?.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-                    resolve(canvas.toDataURL('image/jpeg', 0.9));
-                };
-            });
+        for (let i = 0; i < totalFramesToProcess; i++) {
+            if (isCancelledRef.current) break;
             
-            updateCurrentVideo({ progressCurrent: j + 1, thumbnailDataUrl: dataUrl });
-
-            if (gender === 'All') {
-                frames.push({ timestamp: time, dataUrl });
-            } else {
-                updateCurrentVideo({ progressMessage: `Filtering frame ${j + 1} for a ${gender.toLowerCase()} face...` });
-                const passesFilter = await filterFrameByGender(dataUrl, gender);
-                if (passesFilter) {
-                    frames.push({ timestamp: time, dataUrl });
+            const currentTime = startTime + (i * frameInterval);
+            updateCurrentVideo({
+                progressMessage: `Processing frame ${i + 1} of ${totalFramesToProcess}...`,
+                progressCurrent: i
+            });
+        
+            try {
+                await seekPromise(currentTime);
+                
+                context.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+                updateCurrentVideo({ thumbnailDataUrl: dataUrl });
+        
+                if (await filterFrameByGender(dataUrl, gender)) {
+                    foundFramesCount++;
+                    const newFrame: ExtractedFrame = { timestamp: currentTime, dataUrl };
+                    setExtractedFrames(prev => [...prev, newFrame]);
+                    updateCurrentVideo({ resultCount: foundFramesCount });
                 }
+            } catch (err) {
+                console.error(`Failed to process frame at ${currentTime}s:`, err);
+                // Continue to the next frame
             }
         }
-        
-        setExtractedFrames(frames);
-        updateCurrentVideo({ status: 'queued', progressMessage: `${frames.length} frames found. Ready for selection.` });
-        URL.revokeObjectURL(videoUrl);
-        setProcessingState('idle');
-    }, [currentVideo, framesPerSecond, gender]);
+
+        // --- Finalize ---
+        updateCurrentVideo({
+            status: 'queued',
+            progressMessage: `${isCancelledRef.current ? 'Processing cancelled' : 'Processing complete'}. ${foundFramesCount} frames found.`
+        });
+        cleanup();
+    }, [currentVideo, framesPerSecond, gender, videoSrc]);
 
     const handleEnhanceFrames = useCallback(async () => {
         const framesToEnhance = extractedFrames.filter(f => selectedFrameIds.has(f.timestamp));
         if (framesToEnhance.length === 0 || !currentVideo) return;
-
-        setProcessingState('processing');
-        setEnhancedImages([]);
-        
+        isCancelledRef.current = false; setProcessingState('processing'); setEnhancedImages([]); setFramesBeingEnhanced(framesToEnhance);
         updateCurrentVideo({ status: 'processing', progressMessage: `Enhancing ${framesToEnhance.length} images...`, progressCurrent: 0, progressTotal: framesToEnhance.length });
         
         let referenceFrame: ExtractedFrame | undefined = framesToEnhance[Math.floor(framesToEnhance.length / 2)];
-        
         const newImages: EnhancedImage[] = [];
         for (let j = 0; j < framesToEnhance.length; j++) {
+            if (isCancelledRef.current) break;
             const frame = framesToEnhance[j];
             try {
                 const enhancedUrl = await enhanceImage(frame.dataUrl, referenceFrame?.dataUrl, shouldColorize);
                 if (enhancedUrl) {
                     const newImage = { id: `${frame.timestamp}-${j}`, originalTimestamp: frame.timestamp, url: enhancedUrl };
-                    newImages.push(newImage);
-                    setEnhancedImages(prev => [...prev, newImage]);
+                    newImages.push(newImage); setEnhancedImages(prev => [...prev, newImage]);
                     updateCurrentVideo({ thumbnailDataUrl: enhancedUrl, resultCount: newImages.length });
                 }
-            } catch (enhanceError) {
-                console.error("Enhancement error for a frame, skipping:", enhanceError);
-            }
+            } catch (enhanceError) { console.error("Enhancement error for a frame:", enhanceError); }
             updateCurrentVideo({ progressCurrent: j + 1 });
         }
-
-        updateCurrentVideo({ status: 'done', progressMessage: `Processing complete. Found ${newImages.length} images.` });
+        updateCurrentVideo({ status: 'done', progressMessage: `${isCancelledRef.current ? 'Processing cancelled' : 'Processing complete'}. Found ${newImages.length} images.` });
         setProcessingState('done');
-
     }, [currentVideo, extractedFrames, selectedFrameIds, shouldColorize]);
 
     const handleFrameSelection = (timestamp: number) => {
         setSelectedFrameIds(prev => {
             const newSet = new Set(prev);
-            if (newSet.has(timestamp)) {
-                newSet.delete(timestamp);
-            } else {
-                newSet.add(timestamp);
-            }
+            if (newSet.has(timestamp)) { newSet.delete(timestamp); }
+            else if (newSet.size < MAX_SELECTED_FRAMES) { newSet.add(timestamp); }
+            else { alert(`You can only select a maximum of ${MAX_SELECTED_FRAMES} frames.`); }
             return newSet;
         });
     };
     
     const renderInitialView = () => (
-        <main className="min-h-screen w-full flex flex-col items-center justify-center p-4 bg-gray-50">
-            <div className="text-center mb-8">
-                <h1 className="text-4xl md:text-5xl font-bold text-gray-900">Get Beautiful Images from Videos</h1>
-                <p className="mt-2 text-lg text-gray-600">Upload a video to extract, select, and enhance high-quality frames.</p>
+        <main className="min-h-screen w-full flex flex-col items-center justify-center p-4 bg-slate-900">
+            <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-slate-900 via-slate-900 to-teal-900/40 opacity-50"></div>
+            <div className="relative text-center mb-8">
+                <h1 className="text-4xl md:text-5xl font-bold text-white">Get Beautiful Images from Videos</h1>
+                <p className="mt-2 text-lg text-slate-400">Upload a video to extract, select, and enhance high-quality frames.</p>
             </div>
             <FileInput onFileSelect={handleFileSelect} disabled={processingState === 'processing'} />
         </main>
@@ -694,152 +533,93 @@ const App: React.FC = () => {
 
     const renderProcessingView = () => {
         if (!currentVideo) return null;
-
         const progressPercent = currentVideo.progressTotal > 0 ? (currentVideo.progressCurrent / currentVideo.progressTotal) * 100 : 0;
-        const isProcessing = processingState === 'processing';
 
         return (
-            <main className="container mx-auto p-4 md:p-8">
-                {/* Header */}
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
+            <div className="min-h-screen bg-slate-800 flex">
+                {/* Sidebar */}
+                <aside className="w-96 bg-slate-900/80 backdrop-blur-sm border-r border-slate-700 p-6 flex flex-col justify-between sticky top-0 h-screen">
                     <div>
-                        <h1 className="text-2xl md:text-3xl font-bold text-gray-800 break-all pr-4">{currentVideo.file.name}</h1>
-                        <p className="text-sm text-gray-500 mt-1">{formatBytes(currentVideo.file.size)}</p>
-                    </div>
-                    <button 
-                        onClick={handleRemoveVideo} 
-                        disabled={isProcessing}
-                        className="mt-4 sm:mt-0 flex-shrink-0 px-4 py-2 bg-white text-gray-700 text-sm font-semibold border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                    >
-                        Change Video
-                    </button>
-                </div>
-    
-                {/* Main Content Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                    
-                    {/* Left Column: Config Panel */}
-                    <div className="lg:col-span-1 bg-white p-6 rounded-xl shadow-lg border border-gray-200 space-y-6 sticky top-8">
+                        <div className="mb-8">
+                            <h1 className="text-xl font-bold text-white break-words">{currentVideo.file.name}</h1>
+                            <p className="text-sm text-slate-400 mt-1">{formatBytes(currentVideo.file.size)}</p>
+                        </div>
                         {extractedFrames.length === 0 ? (
                              <>
-                                <h2 className="text-xl font-bold text-gray-800 border-b pb-4">Step 1: Extract Frames</h2>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Video Segment</label>
-                                    <button onClick={() => setConfiguringVideo(currentVideo)} disabled={isProcessing} className="w-full flex justify-between items-center text-left p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">
-                                        <div>
-                                            <span className="font-mono text-indigo-600">{formatTime(currentVideo.startTime ?? 0)}</span>
-                                            <span className="mx-2 text-gray-400">&rarr;</span>
-                                            <span className="font-mono text-indigo-600">{formatTime(currentVideo.endTime ?? 0)}</span>
-                                        </div>
-                                        <span className="text-sm font-semibold text-indigo-600">Edit</span>
-                                    </button>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Frames per Second</label>
-                                    <p className="text-xs text-gray-500 mb-2">Higher values find more frames but take longer to extract.</p>
-                                    <div className="grid grid-cols-4 gap-2">
-                                        {[1, 2, 4, 8].map(fps => (
-                                            <button key={fps} onClick={() => setFramesPerSecond(fps)} disabled={isProcessing}
-                                                className={`w-full py-2 text-sm font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${framesPerSecond === fps ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
-                                                {fps}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">AI Face Filter</label>
-                                    <p className="text-xs text-gray-500 mb-2">Find frames with a prominent face. 'All' skips this filter.</p>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {(['All', 'Male', 'Female'] as Gender[]).map(g => (
-                                            <button key={g} onClick={() => setGender(g)} disabled={isProcessing}
-                                                className={`w-full py-2 text-sm font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${gender === g ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
-                                                {g}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="pt-6 border-t border-gray-200">
-                                    <button onClick={handleExtractFrames} disabled={isProcessing} className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-lg disabled:bg-indigo-400">
-                                        {isProcessing ? <Loader /> : <PlayIcon className="w-6 h-6" />}
-                                        {isProcessing ? 'Extracting...' : 'Extract Frames'}
-                                    </button>
+                                <h2 className="text-lg font-semibold text-white mb-4">Step 1: Extract Frames</h2>
+                                <div className="space-y-5">
+                                    <div><label className="block text-sm font-medium text-slate-300 mb-2">Video Segment</label><button onClick={() => setConfiguringVideo(currentVideo)} disabled={isProcessing} className="w-full flex justify-between items-center text-left p-3 bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700"><span className="font-mono text-teal-400">{formatTime(currentVideo.startTime ?? 0)} &rarr; {formatTime(currentVideo.endTime ?? 0)}</span><span className="text-sm font-semibold text-teal-400">Edit</span></button></div>
+                                    <div><label className="block text-sm font-medium text-slate-300 mb-2">Frames per Second</label><div className="grid grid-cols-5 gap-2">{[1, 2, 4, 8, 24].map(fps => (<button key={fps} onClick={() => setFramesPerSecond(fps)} disabled={isProcessing} className={`w-full py-2 text-sm font-semibold rounded-lg transition-colors ${framesPerSecond === fps ? 'bg-teal-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>{fps === 24 ? 'Max' : fps}</button>))}</div></div>
+                                    <div><label className="block text-sm font-medium text-slate-300 mb-2">AI Face Filter</label><div className="grid grid-cols-3 gap-2">{(['All', 'Male', 'Female'] as Gender[]).map(g => (<button key={g} onClick={() => setGender(g)} disabled={isProcessing} className={`w-full py-2 text-sm font-semibold rounded-lg transition-colors ${gender === g ? 'bg-teal-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>{g}</button>))}</div></div>
                                 </div>
                             </>
                         ) : (
                             <>
-                                <h2 className="text-xl font-bold text-gray-800 border-b pb-4">Step 2: Enhance Images</h2>
-                                <div className="p-3 bg-gray-50 rounded-lg text-center">
-                                    <p className="text-sm font-medium text-gray-800">Selected for Enhancement</p>
-                                    <p className="text-3xl font-bold text-indigo-600">{selectedFrameIds.size}</p>
-                                    <p className="text-xs text-gray-500">of {extractedFrames.length} frames</p>
-                                </div>
-                                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                    <label htmlFor="colorize" className="text-sm font-medium text-gray-700">Colorize if needed</label>
-                                    <button
-                                        id="colorize" role="switch" aria-checked={shouldColorize} onClick={() => setShouldColorize(!shouldColorize)} disabled={isProcessing}
-                                        className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${shouldColorize ? 'bg-indigo-600' : 'bg-gray-200'}`}
-                                    >
-                                        <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${shouldColorize ? 'translate-x-6' : 'translate-x-1'}`} />
-                                    </button>
-                                </div>
-                                 <div className="pt-6 border-t border-gray-200">
-                                    <button onClick={handleEnhanceFrames} disabled={isProcessing || selectedFrameIds.size === 0} className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-lg disabled:bg-indigo-400 disabled:cursor-not-allowed">
-                                        {isProcessing ? <Loader /> : <PlayIcon className="w-6 h-6" />}
-                                        {isProcessing ? 'Enhancing...' : `Enhance ${selectedFrameIds.size} Frame${selectedFrameIds.size === 1 ? '' : 's'}`}
-                                    </button>
+                                <h2 className="text-lg font-semibold text-white mb-4">Step 2: Enhance Images</h2>
+                                <div className="space-y-5">
+                                    <div className="p-4 bg-slate-800 rounded-lg text-center"><p className="text-sm font-medium text-slate-300">Selected</p><p className="text-3xl font-bold text-teal-400">{selectedFrameIds.size}<span className="text-xl text-slate-500 font-medium"> / {MAX_SELECTED_FRAMES}</span></p></div>
+                                    <div className="flex items-center justify-between p-3 bg-slate-800 rounded-lg"><label htmlFor="colorize" className="text-sm font-medium text-slate-300">Colorize if needed</label><button id="colorize" role="switch" aria-checked={shouldColorize} onClick={() => setShouldColorize(!shouldColorize)} disabled={isProcessing} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${shouldColorize ? 'bg-teal-600' : 'bg-slate-700'}`}><span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${shouldColorize ? 'translate-x-6' : 'translate-x-1'}`} /></button></div>
                                 </div>
                             </>
                         )}
-                        {isProcessing && (
-                             <div className="space-y-2 pt-6 border-t">
-                                <div className="text-sm font-medium text-gray-600">{currentVideo.progressMessage}</div>
-                                <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                    <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
-                                </div>
-                                <div className="text-xs text-gray-500 text-right">{currentVideo.progressCurrent} / {currentVideo.progressTotal}</div>
-                            </div>
-                        )}
                     </div>
-    
-                    {/* Right Column: Results Panel */}
-                    <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border border-gray-200 min-h-[60vh] flex flex-col">
+                    <div>
                         {isProcessing ? (
-                            <div>
-                                <h3 className="text-lg font-bold text-gray-800 mb-4">Processing Preview...</h3>
-                                {currentVideo.thumbnailDataUrl ? (
-                                    <img src={currentVideo.thumbnailDataUrl} alt="Processing preview" className="w-full rounded-lg aspect-video object-contain bg-gray-100" />
-                                ) : (
-                                    <div className="w-full rounded-lg aspect-video bg-gray-100 flex items-center justify-center"><Loader /></div>
-                                )}
+                             <div className="space-y-3 pt-6 border-t border-slate-700">
+                                <div className="flex justify-between items-baseline"><div className="text-sm font-medium text-slate-400">{currentVideo.progressMessage}</div><div className="text-xs text-slate-500 font-mono">{currentVideo.progressCurrent}/{currentVideo.progressTotal}</div></div>
+                                <div className="w-full bg-slate-700 rounded-full h-2.5"><div className="bg-gradient-to-r from-teal-500 to-fuchsia-500 h-2.5 rounded-full transition-all" style={{ width: `${progressPercent}%` }}></div></div>
+                                <button onClick={handleCancel} className="w-full mt-2 px-4 py-2 bg-red-500/20 text-red-400 text-sm font-semibold rounded-lg hover:bg-red-500/30">Cancel</button>
                             </div>
-                        ) : processingState === 'done' && enhancedImages.length > 0 ? (
-                            <ImageGallery images={enhancedImages} onImageClick={setPreviewingImage} />
-                        ) : processingState === 'done' && enhancedImages.length === 0 ? (
-                            <div className="flex-grow flex flex-col items-center justify-center text-center text-gray-500">
-                                <ImageIcon className="w-20 h-20 text-gray-300 mb-4" />
-                                <h3 className="text-xl font-semibold">No Results Found</h3>
-                                <p className="mt-1 max-w-sm">{currentVideo.progressMessage || `Enhancement did not produce any images.`}</p>
-                            </div>
-                        ) : extractedFrames.length > 0 ? (
-                            <ExtractedFrameGallery 
-                                frames={extractedFrames} 
-                                selectedIds={selectedFrameIds} 
-                                onFrameSelect={handleFrameSelection} 
-                                onFramePreview={setPreviewingExtractedFrame}
-                                onFrameCrop={setCroppingFrame} 
-                                onSelectAll={() => setSelectedFrameIds(new Set(extractedFrames.map(f => f.timestamp)))}
-                                onDeselectAll={() => setSelectedFrameIds(new Set())}
-                            />
+                        ) : extractedFrames.length === 0 ? (
+                            <button onClick={handleExtractFrames} className="w-full flex items-center justify-center gap-2 bg-teal-600 text-white py-3 rounded-lg font-semibold hover:bg-teal-700 text-lg"><PlayIcon className="w-6 h-6" />Extract Frames</button>
                         ) : (
-                            <div className="flex-grow flex flex-col items-center justify-center text-center text-gray-500">
-                                <ImageIcon className="w-20 h-20 text-gray-300 mb-4" />
-                                <h3 className="text-xl font-semibold">Ready to Extract</h3>
-                                <p className="mt-1">Extracted frames will appear here for you to select.</p>
-                            </div>
+                             <button onClick={handleEnhanceFrames} disabled={selectedFrameIds.size === 0} className="w-full flex items-center justify-center gap-2 bg-teal-600 text-white py-3 rounded-lg font-semibold hover:bg-teal-700 text-lg disabled:bg-teal-600/50 disabled:cursor-not-allowed"><PlayIcon className="w-6 h-6" />Enhance {selectedFrameIds.size} Frame{selectedFrameIds.size === 1 ? '' : 's'}</button>
                         )}
+                        <button onClick={handleRemoveVideo} disabled={isProcessing} className="w-full mt-3 text-sm text-slate-400 hover:text-teal-400 font-semibold disabled:opacity-50">Change Video</button>
                     </div>
-                </div>
-            </main>
+                </aside>
+
+                {/* Main Content */}
+                <main className="flex-1 p-8 overflow-y-auto">
+                    {isProcessing && framesBeingEnhanced.length > 0 ? (
+                        <div>
+                            <h3 className="text-3xl font-bold text-white mb-4">Enhancing {framesBeingEnhanced.length} Frames...</h3>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                {framesBeingEnhanced.map(frame => {
+                                    const enhancedVersion = enhancedImages.find(img => img.originalTimestamp === frame.timestamp);
+                                    return (<div key={frame.timestamp} className="relative group bg-slate-700 border border-slate-600 rounded-lg overflow-hidden shadow-sm"><img src={enhancedVersion ? enhancedVersion.url : frame.dataUrl} alt={`Frame at ${frame.timestamp.toFixed(2)}s`} className="w-full h-40 object-cover" />{!enhancedVersion ? (<div className="absolute inset-0 bg-black/60 flex items-center justify-center"><Loader /></div>) : (<div className="absolute top-2 right-2 text-green-400 bg-black/50 rounded-full p-0.5"><CheckCircleIcon className="w-5 h-5" /></div>)}</div>);
+                                })}
+                            </div>
+                        </div>
+                    ) : processingState === 'done' ? (
+                        enhancedImages.length > 0 ? <ImageGallery images={enhancedImages} onImageClick={(img) => setPreviewingImage(img)} />
+                        : (<div className="flex-grow flex flex-col items-center justify-center text-center text-slate-400 min-h-[80vh]"><ImageIcon className="w-20 h-20 text-slate-600 mb-4" /><h3 className="text-xl font-semibold">No Results Found</h3><p className="mt-1 max-w-sm">{currentVideo.progressMessage}</p></div>)
+                    ) : extractedFrames.length > 0 ? (
+                        <ExtractedFrameGallery frames={extractedFrames} selectedIds={selectedFrameIds} onFrameSelect={handleFrameSelection} onFramePreview={(frame) => setPreviewingImage(frame)} onFrameCrop={setCroppingFrame} onSelectAll={() => setSelectedFrameIds(new Set(extractedFrames.slice(0, MAX_SELECTED_FRAMES).map(f => f.timestamp)))} onDeselectAll={() => setSelectedFrameIds(new Set())} />
+                    ) : (
+                        currentVideo &&
+                        <div className="flex-grow flex flex-col items-center justify-center text-center min-h-[80vh]">
+                            <h3 className="text-2xl font-bold text-white mb-4">
+                                {isProcessing ? 'Extracting Frames...' : 'Video Preview'}
+                            </h3>
+                            {isProcessing && currentVideo.thumbnailDataUrl ? (
+                                <img src={currentVideo.thumbnailDataUrl} alt="Filtering preview" className="w-full max-w-4xl rounded-lg shadow-2xl aspect-video object-contain bg-black" />
+                            ) : (
+                                <video 
+                                    ref={videoPreviewRef}
+                                    controls={!isProcessing}
+                                    muted
+                                    className="w-full max-w-4xl rounded-lg shadow-2xl aspect-video object-contain bg-black"
+                                    src={videoSrc ?? undefined}
+                                />
+                            )}
+                             {!isProcessing && (
+                                <p className="mt-4 text-slate-400">Your selected video is ready. Use the controls on the left to start extracting frames.</p>
+                             )}
+                        </div>
+                    )}
+                </main>
+            </div>
         );
     };
     
@@ -847,8 +627,7 @@ const App: React.FC = () => {
         <>
             {!currentVideo ? renderInitialView() : renderProcessingView()}
             {configuringVideo && <SegmentSelectorModal item={configuringVideo} onClose={() => setConfiguringVideo(null)} onSave={handleSaveConfiguration} />}
-            {previewingImage && <ImagePreviewModal image={previewingImage} onClose={() => setPreviewingImage(null)} />}
-            {previewingExtractedFrame && <ExtractedFramePreviewModal frame={previewingExtractedFrame} onClose={() => setPreviewingExtractedFrame(null)} />}
+            {previewingImage && <ImagePreviewModal image={previewingImage} onClose={() => setPreviewingImage(null)} isEnhanced={'url' in previewingImage} />}
             {croppingFrame && <CropImageModal frame={croppingFrame} onSave={handleSaveCrop} onClose={() => setCroppingFrame(null)} />}
         </>
     );
